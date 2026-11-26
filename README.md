@@ -23,6 +23,20 @@ This software is licenced under the GPL v2 and is intended for amateur and educa
 - CW ID support
 - Full duplex support with two ADF7021
 
+# Display port speed (MMDVM_SERIAL_SPEED, 0x8F)
+
+The display port (the Nextion header) runs at `SERIAL_REPEATER_BAUD` (9600). A host can change its speed for a while, for example to load a Nextion screen design (`.tft`) through the modem at 115200 rather than 9600:
+
+| | |
+|---|---|
+| Command | `E0 07 8F` followed by the speed as 4 bytes, least significant first (115200 is `00 C2 01 00`) |
+| Speeds | 9600, 19200, 38400, 57600 or 115200 |
+| Reply | ACK once the port runs at the new speed; NAK 4 for any other speed or length |
+
+Anything already queued for the display is sent at the old speed first. The speed goes back to `SERIAL_REPEATER_BAUD` on the next `GET_VERSION` (which every host sends when it opens the modem) and on a reset, so nothing changes unless the command is sent. Firmware without this command, and builds without a display port, answer NAK 1, so a host can tell whether it is there.
+
+To load a screen design: stop the host, send the Nextion `whmi-wri <size>,115200,0` (in `0x80` frames, at 9600), then `0x8F` with 115200, and send the design in `0x80` frames, 4096 bytes at a time, waiting for the screen's `0x05` after each block. Send `0x8F` with 9600 when it is done.
+
 # Known issues
 
 ## Common issues for simplex and duplex boards

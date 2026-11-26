@@ -78,6 +78,9 @@ const uint8_t MMDVM_NAK          = 0x7FU;
 
 const uint8_t MMDVM_SERIAL       = 0x80U;
 
+// Sets the display port's speed until the next GET_VERSION or reset
+const uint8_t MMDVM_SERIAL_SPEED = 0x8FU;
+
 const uint8_t MMDVM_TRANSPARENT  = 0x90U;
 const uint8_t MMDVM_QSO_INFO     = 0x91U;
 
@@ -103,6 +106,7 @@ m_ptr(0U),
 m_len(0U),
 m_lastSerialAvail(0),
 m_lastSerialAvailCount(0U),
+m_serialSpeed(0U),
 m_debug(false),
 m_firstCal(false)
 {
@@ -658,8 +662,48 @@ void CSerialPort::start()
 
 #if defined(SERIAL_REPEATER) || defined(SERIAL_REPEATER_USART1)
   beginInt(3U, SERIAL_REPEATER_BAUD);
+  m_serialSpeed = SERIAL_REPEATER_BAUD;
 #endif
 }
+
+#if defined(SERIAL_REPEATER) || defined(SERIAL_REPEATER_USART1)
+// The display port's speed: one of the speeds a Nextion display takes,
+// as 4 bytes, least significant first. It holds until the next GET_VERSION
+// (any host opening the modem) or a reset, which set SERIAL_REPEATER_BAUD.
+uint8_t CSerialPort::setSerialSpeed(const uint8_t* data, uint8_t length)
+{
+  if (length != 4U)
+    return 4U;
+
+  uint32_t speed = data[0U] | (data[1U] << 8) | (uint32_t(data[2U]) << 16) | (uint32_t(data[3U]) << 24);
+
+  switch (speed) {
+    case 9600U:
+    case 19200U:
+    case 38400U:
+    case 57600U:
+    case 115200U:
+      applySerialSpeed(speed);
+      return 0U;
+    default:
+      return 4U;
+  }
+}
+
+void CSerialPort::applySerialSpeed(uint32_t speed)
+{
+  if (speed == m_serialSpeed)
+    return;
+
+  // What was sent at the old speed goes first
+  writeInt(3U, NULL, 0U, true);
+
+  beginInt(3U, speed);
+  m_serialSpeed          = speed;
+  m_lastSerialAvail      = 0;
+  m_lastSerialAvailCount = 0U;
+}
+#endif
 
 void CSerialPort::process()
 {
@@ -695,6 +739,9 @@ void CSerialPort::process()
             break;
 
           case MMDVM_GET_VERSION:
+#if defined(SERIAL_REPEATER) || defined(SERIAL_REPEATER_USART1)
+            applySerialSpeed(SERIAL_REPEATER_BAUD);
+#endif
             getVersion();
             break;
 
@@ -1016,6 +1063,14 @@ void CSerialPort::process()
 #if defined(SERIAL_REPEATER) || defined(SERIAL_REPEATER_USART1)
           case MMDVM_SERIAL:
             writeInt(3U, m_buffer + 3U, m_len - 3U);
+            break;
+
+          case MMDVM_SERIAL_SPEED:
+            err = setSerialSpeed(m_buffer + 3U, m_len - 3U);
+            if (err == 0U)
+              sendACK();
+            else
+              sendNAK(err);
             break;
 #endif
 
